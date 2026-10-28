@@ -90,7 +90,7 @@ history `CHECK` that makes a duplicate entry impossible, nullable `previous_stag
 imported rows, the nullable `stage_entered_at`, and the version column. Turn foreign-key
 enforcement on explicitly, because SQLite leaves it off by default and a schema that
 looks correct while enforcing nothing is worse than no schema at all. Then build the
-seed: eleven vendors and three coordinators, positioned relative to the injected clock
+seed: twelve vendors and three coordinators, positioned relative to the injected clock
 so that the dataset is identical on every machine, in every timezone, and at any hour.
 
 **Deliverables:**

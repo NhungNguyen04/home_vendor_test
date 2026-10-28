@@ -315,7 +315,7 @@ CREATE INDEX idx_history_changed_by ON stage_history(changed_by);
 ### Seed data
 
 Three coordinators (Linh, Huy, Mai) with the shared demo password documented in the
-README and shown as a hint on the login screen. Eleven vendors covering all five stages
+README and shown as a hint on the login screen. Twelve vendors covering all five stages
 and every edge case the brief names. All offsets are relative to the injected clock, so
 the dataset is identical on every machine and in every timezone.
 
@@ -338,9 +338,11 @@ Company E, J, K and L exist together on purpose: they pin the boundary from both
 and prove that the rule is applied to the exact elapsed milliseconds rather than to a
 floored day count.
 
-Each seeded vendor also gets one to three `stage_history` rows so the history panel is
-never empty, and one vendor (Company H) gets an "import" entry with a null
-`previous_stage`.
+Each seeded vendor except Company H gets one or two `stage_history` rows, so the history
+panel is never empty for a vendor that has actually moved. Company F's single entry has a
+null `previous_stage`, because it was imported straight into "Contract Sent" with no prior
+stage. Company H has no history at all: it was imported with a blank date and no
+transitions, which is exactly the case the unknown-duration badge exists for.
 
 ### Invariants the data must satisfy
 
@@ -523,7 +525,7 @@ All paths are relative to the repository root.
 | `src/db/schema.js` | Add | DDL as an exported string, including the `CHECK` constraints and indexes. A JS string rather than a `.sql` file — no path resolution to get wrong between the server and the tests. |
 | `src/db/connection.js` | Add | Opens the database, applies `PRAGMA foreign_keys = ON` and the schema. |
 | `src/db/queries.js` | Add | Prepares every statement once against a connection. |
-| `src/db/seed.js` | Add | The deterministic eleven-vendor dataset and three coordinators, relative to the injected clock. |
+| `src/db/seed.js` | Add | The deterministic twelve-vendor dataset and three coordinators, relative to the injected clock. |
 | `src/services/stage-service.js` | Add | `changeStage()` — the single write transaction — plus `toVendorDto()`. |
 | `src/services/auth-service.js` | Add | `login()`, `logout()`, `getSession()`, scrypt verification. |
 | `src/http/errors.js` | Add | `AppError` and the single JSON error handler, so every failure has the same shape. |
@@ -612,11 +614,11 @@ story changes with it; that constraint is recorded here rather than solved in ad
 
 | # | Question | Owner | Decision deadline | Current position |
 | --- | --- | --- | --- | --- |
-| Q1 | Should a vendor in the terminal `Active` stage be exempt from the stuck threshold? | Product | Before a future iteration | **Not exempt.** BR-05 is read literally, and `isTerminal` is exposed on the payload so that exempting `Active` becomes a one-line rule change plus a UI branch rather than a refactor. |
+| Q1 | Should a vendor in the terminal `Active` stage be exempt from the stuck threshold? | Product | Before a future iteration | **Exempt.** A vendor that reached `Active` has finished onboarding, so waiting there is the intended outcome rather than a stall. The threshold rule itself stays pure and is applied to every stage; the exemption lives in one function (`isVendorStuck`), so reversing it is a one-line change. `isTerminal` is exposed on the payload either way. |
 | Q2 | Should sequential stage transitions be enforced? | Product | Before a future iteration | **No.** The brief requires coordinators to move vendors and does not require ordering. Documented as an assumption; enforcing it later would be additive. |
 | Q3 | Should the coordinator be able to edit the free-text note? | Product | Before a future iteration | **Out of scope.** Notes are seeded and read-only. The spec asks for stage tracking, not a notes editor. |
 | Q4 | Should sessions survive a server restart? | Engineering | Next iteration | **No.** In-memory for now; a session table or Redis is the first item on the "what next" list. |
-| Q5 | Should the "stuck" list be sorted to the top by default? | Product | Before the UI is built | **Yes.** The board sorts stuck vendors first by default, with a toggle. This is a presentation choice, not a rule. |
+| Q5 | Should the "stuck" list be sorted to the top by default? | Product | Before the UI is built | **No.** The board keeps the spreadsheet's alphabetical order, so a coordinator is not looking at a list that reorders itself under them; stuck vendors are marked in place and an "only stuck" filter narrows the list to them. This is a presentation choice, not a rule. |
 | Q6 | Does the Ops team need per-region coordinator permissions? | Product | Unknown | **Assumed no.** All coordinators can move all vendors, matching the spreadsheet. Worth confirming with the team. |
 | Q7 | Should the frozen demo clock be the default in the submitted repository? | Engineering | At submission | **Yes**, with a visible badge and a one-line switch to live time. The brief explicitly permits it, and it is what makes the boundary case demonstrable. |
 
