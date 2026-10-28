@@ -1,0 +1,22 @@
+{
+  "name": "vendor-onboarding-tracker",
+  "version": "1.0.0",
+  "description": "Replace the Ops vendor-onboarding spreadsheet with a small web app that tracks stage, audit history and stuck vendors.",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "start": "node src/server.js",
+    "seed": "node src/db/seed.js --reset",
+    "test": "node --test \"test/**/*.test.js\""
+  },
+  "dependencies": {
+    "better-sqlite3": "^13.0.3",
+    "express": "^5.3.0"
+  },
+  "devDependencies": {
+    "supertest": "^7.1.1"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}
