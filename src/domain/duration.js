@@ -2,6 +2,7 @@
  * Pure duration and stuckness rules. No I/O, no clock reads — every function
  * takes the instant to measure against.
  */
+import { isTerminal } from './stages.js';
 
 export const DAY_MS = 86_400_000;
 
@@ -52,6 +53,26 @@ export function computeDuration(stageEnteredAt, now) {
 export function isStuck(durationMs, thresholdDays) {
   if (durationMs == null) return null;
   return durationMs > thresholdDays * DAY_MS;
+}
+
+/**
+ * Should this vendor be flagged as stuck?
+ *
+ * This wraps the threshold rule with one business judgment: a vendor in the
+ * terminal stage has finished onboarding, so waiting there is the intended
+ * outcome rather than a stall. The threshold rule itself stays pure and is
+ * applied to every stage; the exemption lives here, in one place, and is
+ * documented as an assumption in main-design.md.
+ *
+ * @param {string} stage the vendor's current stage
+ * @param {number | null} durationMs elapsed milliseconds, or null when unknown
+ * @param {number} thresholdDays the configured threshold
+ * @returns {boolean | null} null when the duration is unknown
+ */
+export function isVendorStuck(stage, durationMs, thresholdDays) {
+  if (durationMs == null) return null;
+  if (isTerminal(stage)) return false;
+  return isStuck(durationMs, thresholdDays);
 }
 
 /** Human-readable duration, e.g. "7d 4h". */

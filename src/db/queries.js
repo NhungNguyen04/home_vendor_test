@@ -16,15 +16,37 @@ export function createStatements(db) {
       SELECT * FROM coordinators WHERE email = ?`),
 
     listVendors: db.prepare(`
-      SELECT v.*, c.name AS owner_name
+      SELECT v.*, c.name AS owner_name,
+             h.previous_stage AS last_previous_stage,
+             h.new_stage      AS last_new_stage,
+             h.changed_at     AS last_changed_at,
+             h.changed_by     AS last_changed_by,
+             hc.name          AS last_changed_by_name
       FROM vendors v
       LEFT JOIN coordinators c ON c.id = v.owner_id
+      LEFT JOIN stage_history h ON h.id = (
+        SELECT id FROM stage_history
+        WHERE vendor_id = v.id
+        ORDER BY changed_at DESC, id DESC
+        LIMIT 1)
+      LEFT JOIN coordinators hc ON hc.id = h.changed_by
       ORDER BY v.name`),
 
     getVendor: db.prepare(`
-      SELECT v.*, c.name AS owner_name
+      SELECT v.*, c.name AS owner_name,
+             h.previous_stage AS last_previous_stage,
+             h.new_stage      AS last_new_stage,
+             h.changed_at     AS last_changed_at,
+             h.changed_by     AS last_changed_by,
+             hc.name          AS last_changed_by_name
       FROM vendors v
       LEFT JOIN coordinators c ON c.id = v.owner_id
+      LEFT JOIN stage_history h ON h.id = (
+        SELECT id FROM stage_history
+        WHERE vendor_id = v.id
+        ORDER BY changed_at DESC, id DESC
+        LIMIT 1)
+      LEFT JOIN coordinators hc ON hc.id = h.changed_by
       WHERE v.id = ?`),
 
     // The concurrency guard: the version is part of the WHERE clause, so a
@@ -54,6 +76,8 @@ export function createStatements(db) {
       LIMIT 1`),
 
     countVendors: db.prepare(`SELECT COUNT(*) AS count FROM vendors`),
+
+    countCoordinators: db.prepare(`SELECT COUNT(*) AS count FROM coordinators`),
 
     countHistory: db.prepare(`SELECT COUNT(*) AS count FROM stage_history`),
 
