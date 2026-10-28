@@ -31,6 +31,12 @@ function seededDb() {
   return { db, statements };
 }
 
+/** Elapsed time in the current stage, or null when the stage-entry time is unknown. */
+function elapsed(vendor, now = NOW) {
+  if (vendor.stage_entered_at === null) return null;
+  return now - vendor.stage_entered_at;
+}
+
 test('the dataset has three coordinators', () => {
   const { db, statements } = seededDb();
   assert.equal(statements.countCoordinators.get().count, SEED_COORDINATORS.length);
@@ -62,10 +68,10 @@ test('the dataset contains both stuck and healthy vendors', () => {
 
   const stuck = statements.listVendors
     .all()
-    .filter((v) => isVendorStuck(v.stage, NOW - v.stage_entered_at, THRESHOLD) === true);
+    .filter((v) => isVendorStuck(v.stage, elapsed(v), THRESHOLD) === true);
   const healthy = statements.listVendors
     .all()
-    .filter((v) => isVendorStuck(v.stage, NOW - v.stage_entered_at, THRESHOLD) === false);
+    .filter((v) => isVendorStuck(v.stage, elapsed(v), THRESHOLD) === false);
 
   assert.ok(stuck.length >= 1, 'the demo needs at least one stuck vendor');
   assert.ok(healthy.length >= 1, 'the demo needs at least one healthy vendor');
@@ -103,7 +109,8 @@ test('a vendor with no stage-entry time is not counted as stuck', () => {
   const { db, statements } = seededDb();
   const vendor = statements.getVendor.get(8);
 
-  assert.equal(isVendorStuck(vendor.stage, NOW - vendor.stage_entered_at, THRESHOLD), null);
+  assert.equal(elapsed(vendor), null);
+  assert.equal(isVendorStuck(vendor.stage, elapsed(vendor), THRESHOLD), null);
   db.close();
 });
 
