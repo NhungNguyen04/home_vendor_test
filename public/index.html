@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Vendor Onboarding Tracker</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main id="app">
+      <!-- ------------------------------------------------------------ login -->
+      <section id="login-view" class="view login-view">
+        <div class="login-card">
+          <h1>Vendor Onboarding Tracker</h1>
+          <p class="subtitle">Operations &middot; vendor onboarding</p>
+
+          <form id="login-form" novalidate>
+            <label for="email">Email</label>
+            <input
+              id="email"
+              name="email"
+              type="email"
+              autocomplete="username"
+              placeholder="you@company.vn"
+              required
+            />
+
+            <label for="password">Password</label>
+            <input
+              id="password"
+              name="password"
+              type="password"
+              autocomplete="current-password"
+              placeholder="••••••••"
+              required
+            />
+
+            <button type="submit" class="btn btn-primary btn-block">Sign in</button>
+            <p id="login-error" class="form-error" role="alert" hidden></p>
+          </form>
+
+          <div class="demo-accounts">
+            <p class="demo-title">Demo accounts</p>
+            <div class="demo-list">
+              <button type="button" class="demo-link" data-email="linh@company.vn">
+                linh@company.vn
+              </button>
+              <button type="button" class="demo-link" data-email="huy@company.vn">
+                huy@company.vn
+              </button>
+              <button type="button" class="demo-link" data-email="mai@company.vn">
+                mai@company.vn
+              </button>
+            </div>
+            <p class="muted">Password for all three: <code>ops1234</code></p>
+          </div>
+        </div>
+      </section>
+
+      <!-- --------------------------------------------------------- dashboard -->
+      <section id="dashboard-view" class="view" hidden>
+        <header class="topbar">
+          <div class="topbar-left">
+            <h1>Vendor Onboarding Tracker</h1>
+            <p class="subtitle">
+              Signed in as <strong id="who-name">—</strong>
+              <span id="who-email" class="muted"></span>
+            </p>
+          </div>
+          <div class="topbar-right">
+            <div class="clock" id="clock-info" title="The instant every duration is measured against">
+              <span class="clock-label">As of</span>
+              <span id="clock-value">—</span>
+              <span id="clock-chip" class="chip chip-frozen" hidden>frozen demo clock</span>
+            </div>
+            <button type="button" class="btn" id="refresh-button">Refresh</button>
+            <button type="button" class="btn" id="logout-button">Sign out</button>
+          </div>
+        </header>
+
+        <section class="summary" aria-label="Summary">
+          <div class="stat">
+            <span class="stat-value" id="stat-total">0</span>
+            <span class="stat-label">vendors</span>
+          </div>
+          <div class="stat stat-stuck">
+            <span class="stat-value" id="stat-stuck">0</span>
+            <span class="stat-label">stuck over <span id="stat-threshold">7</span> days</span>
+          </div>
+          <div class="stat stat-unknown">
+            <span class="stat-value" id="stat-unknown">0</span>
+            <span class="stat-label">no stage-entry time</span>
+          </div>
+          <div class="stat stat-healthy">
+            <span class="stat-value" id="stat-healthy">0</span>
+            <span class="stat-label">not stuck</span>
+          </div>
+        </section>
+
+        <section class="filters" aria-label="Filters">
+          <div class="field">
+            <label for="filter-search">Search</label>
+            <input id="filter-search" type="search" placeholder="Vendor or region" />
+          </div>
+          <div class="field">
+            <label for="filter-stage">Stage</label>
+            <select id="filter-stage">
+              <option value="">All stages</option>
+            </select>
+          </div>
+          <label class="checkbox">
+            <input id="filter-stuck" type="checkbox" />
+            <span>Only stuck</span>
+          </label>
+          <button type="button" class="btn btn-quiet" id="filter-reset">Clear filters</button>
+        </section>
+
+        <div class="table-wrap">
+          <table class="vendors">
+            <thead>
+              <tr>
+                <th scope="col">Vendor</th>
+                <th scope="col">Region</th>
+                <th scope="col">Stage</th>
+                <th scope="col">Owner</th>
+                <th scope="col">Time in stage</th>
+                <th scope="col">Status</th>
+                <th scope="col">Move to</th>
+              </tr>
+            </thead>
+            <tbody id="vendor-rows"></tbody>
+          </table>
+          <p id="empty-state" class="empty" hidden>
+            No vendors match these filters.
+          </p>
+        </div>
+
+        <p class="footnote">
+          Every stage change is recorded automatically with the coordinator and the
+          time. Vendors are flagged as stuck automatically from the moment they
+          entered the current stage &mdash; no one maintains a &ldquo;last
+          updated&rdquo; date.
+        </p>
+      </section>
+    </main>
+
+    <script src="app.js" type="module"></script>
+  </body>
+</html>
