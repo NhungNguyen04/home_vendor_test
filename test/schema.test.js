@@ -9,7 +9,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import Database from 'better-sqlite3';
-import { SCHEMA } from '../src/db/schema.js';
+import { SCHEMA, migrate } from '../src/db/schema.js';
 import { createStatements } from '../src/db/queries.js';
 import { seed } from '../src/db/seed.js';
 import { NOW } from './helpers.js';
@@ -65,6 +65,7 @@ test('a history entry naming an unknown coordinator is rejected', () => {
         previousStage: 'Contract Signed',
         newStage: 'KYC Docs Received',
         changedAt: NOW,
+        reason: null,
       }),
     /FOREIGN KEY constraint failed/i,
   );
@@ -83,6 +84,7 @@ test('a history entry naming an unknown vendor is rejected', () => {
         previousStage: 'Contract Signed',
         newStage: 'KYC Docs Received',
         changedAt: NOW,
+        reason: null,
       }),
     /FOREIGN KEY constraint failed/i,
   );
@@ -101,6 +103,7 @@ test('a history entry that claims nothing changed is rejected', () => {
         previousStage: 'Contract Signed',
         newStage: 'Contract Signed',
         changedAt: NOW,
+        reason: null,
       }),
     /CHECK constraint failed/i,
   );
@@ -118,9 +121,119 @@ test('a history entry with no previous stage is allowed', () => {
     previousStage: null,
     newStage: 'Contract Signed',
     changedAt: NOW,
+    reason: null,
   });
 
   assert.ok(inserted.lastInsertRowid);
+});
+
+// --------------------------------------------------------------- the reason
+
+test('a history entry can carry a reason, and it reads back', () => {
+  const db = freshDb();
+  const statements = createStatements(db);
+  seed(db, statements, NOW);
+
+  statements.insertHistory.run({
+    vendorId: 3,
+    changedBy: 1,
+    previousStage: 'Contract Signed',
+    newStage: 'Contract Sent',
+    changedAt: NOW,
+    reason: 'Wrongly entered - the contract was never sent',
+  });
+
+  const entry = statements.listHistory.all(3)[0];
+  assert.equal(entry.reason, 'Wrongly entered - the contract was never sent');
+});
+
+test('a history entry without a reason has none, rather than an empty string', () => {
+  const db = freshDb();
+  const statements = createStatements(db);
+  seed(db, statements, NOW);
+
+  const entry = statements.listHistory.all(3)[0];
+  assert.equal(entry.reason, null);
+});
+
+// ------------------------------------------------------------- the migration
+
+/** The schema as it was before the reason column existed. */
+const PREVIOUS_SCHEMA = `
+CREATE TABLE IF NOT EXISTS stage_history (
+  id             INTEGER PRIMARY KEY,
+  vendor_id      INTEGER NOT NULL REFERENCES vendors(id),
+  changed_by     INTEGER NOT NULL REFERENCES coordinators(id),
+  previous_stage TEXT,
+  new_stage      TEXT    NOT NULL
+                 CHECK (new_stage IN ('Contract Sent','Contract Signed',
+                                      'KYC Docs Received','KYC Verified','Active')),
+  changed_at     INTEGER NOT NULL,
+  CHECK (previous_stage IS NULL OR previous_stage <> new_stage)
+);
+`;
+
+test('the migration adds the reason column to a database from the previous version', () => {
+  const db = new Database(':memory:');
+  db.exec(PREVIOUS_SCHEMA);
+
+  assert.equal(
+    db.prepare('PRAGMA table_info(stage_history)').all().some((c) => c.name === 'reason'),
+    false,
+  );
+
+  migrate(db);
+
+  assert.equal(
+    db.prepare('PRAGMA table_info(stage_history)').all().some((c) => c.name === 'reason'),
+    true,
+  );
+  db.close();
+});
+
+test('the migration is a no-op on a database that is already current', () => {
+  const db = freshDb();
+
+  migrate(db);
+
+  const columns = db.prepare('PRAGMA table_info(stage_history)').all();
+  assert.equal(columns.filter((c) => c.name === 'reason').length, 1);
+  db.close();
+});
+
+test('the migration leaves the rows already in the table alone', () => {
+  const db = new Database(':memory:');
+  db.exec(PREVIOUS_SCHEMA);
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS coordinators (
+      id INTEGER PRIMARY KEY, name TEXT NOT NULL, email TEXT NOT NULL UNIQUE,
+      password_hash TEXT NOT NULL, password_salt TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS vendors (
+      id INTEGER PRIMARY KEY, name TEXT NOT NULL, region TEXT NOT NULL,
+      stage TEXT NOT NULL, stage_entered_at INTEGER,
+      owner_id INTEGER REFERENCES coordinators(id), notes TEXT,
+      version INTEGER NOT NULL DEFAULT 1);
+  `);
+  db.prepare(
+    `INSERT INTO coordinators (id, name, email, password_hash, password_salt)
+     VALUES (1, 'Linh', 'linh@company.vn', 'hash', 'salt')`,
+  ).run();
+  db.prepare(
+    `INSERT INTO vendors (id, name, region, stage, stage_entered_at, owner_id, notes, version)
+     VALUES (1, 'Company C', 'Hanoi', 'Contract Signed', ?, 1, NULL, 2)`,
+  ).run(NOW);
+  db.prepare(
+    `INSERT INTO stage_history
+       (id, vendor_id, changed_by, previous_stage, new_stage, changed_at)
+     VALUES (1, 1, 1, 'Contract Sent', 'Contract Signed', ?)`,
+  ).run(NOW);
+
+  migrate(db);
+
+  const row = db.prepare('SELECT * FROM stage_history WHERE id = 1').get();
+  assert.equal(row.new_stage, 'Contract Signed');
+  assert.equal(row.reason, null);
+  db.close();
 });
 
 /**

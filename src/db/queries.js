@@ -21,6 +21,7 @@ export function createStatements(db) {
              h.new_stage      AS last_new_stage,
              h.changed_at     AS last_changed_at,
              h.changed_by     AS last_changed_by,
+             h.reason         AS last_reason,
              hc.name          AS last_changed_by_name
       FROM vendors v
       LEFT JOIN coordinators c ON c.id = v.owner_id
@@ -38,6 +39,7 @@ export function createStatements(db) {
              h.new_stage      AS last_new_stage,
              h.changed_at     AS last_changed_at,
              h.changed_by     AS last_changed_by,
+             h.reason         AS last_reason,
              hc.name          AS last_changed_by_name
       FROM vendors v
       LEFT JOIN coordinators c ON c.id = v.owner_id
@@ -58,9 +60,9 @@ export function createStatements(db) {
 
     insertHistory: db.prepare(`
       INSERT INTO stage_history
-        (vendor_id, changed_by, previous_stage, new_stage, changed_at)
+        (vendor_id, changed_by, previous_stage, new_stage, changed_at, reason)
       VALUES
-        (@vendorId, @changedBy, @previousStage, @newStage, @changedAt)`),
+        (@vendorId, @changedBy, @previousStage, @newStage, @changedAt, @reason)`),
 
     listHistory: db.prepare(`
       SELECT h.*, c.name AS changed_by_name
@@ -93,10 +95,5 @@ export function createStatements(db) {
       INSERT INTO vendors
         (id, name, region, stage, stage_entered_at, owner_id, notes, version)
       VALUES (@id, @name, @region, @stage, @stageEnteredAt, @ownerId, @notes, @version)`),
-
-    insertSeededHistory: db.prepare(`
-      INSERT INTO stage_history
-        (vendor_id, changed_by, previous_stage, new_stage, changed_at)
-      VALUES (@vendorId, @changedBy, @previousStage, @newStage, @changedAt)`),
   };
 }

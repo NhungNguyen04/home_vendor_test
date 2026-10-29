@@ -124,6 +124,7 @@ test('a vendor reports who changed it last', async () => {
     newStage: 'KYC Docs Received',
     changedBy: { id: 2, name: 'Huy' },
     changedAt: new Date(NOW - 24 * 24 * 60 * 60 * 1000).toISOString(),
+    reason: null,
   });
 });
 

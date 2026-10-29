@@ -41,9 +41,29 @@ CREATE TABLE IF NOT EXISTS stage_history (
                  CHECK (new_stage IN ('Contract Sent','Contract Signed',
                                       'KYC Docs Received','KYC Verified','Active')),
   changed_at     INTEGER NOT NULL,
+  reason         TEXT,
   CHECK (previous_stage IS NULL OR previous_stage <> new_stage)
 );
 
 CREATE INDEX IF NOT EXISTS idx_vendors_stage  ON vendors(stage);
 CREATE INDEX IF NOT EXISTS idx_history_vendor ON stage_history(vendor_id, changed_at DESC);
 `;
+
+/**
+ * Bring a database created by an earlier version up to the current schema.
+ *
+ * `CREATE TABLE IF NOT EXISTS` creates a missing table but cannot add a column
+ * to one that already exists, so a database written by the previous version
+ * would otherwise fail on the first stage change. This is one guarded ALTER,
+ * not a migration framework: the database is still disposable, but a stale one
+ * keeps working instead of breaking.
+ *
+ * @param {import('better-sqlite3').Database} db
+ */
+export function migrate(db) {
+  const columns = db.prepare('PRAGMA table_info(stage_history)').all();
+
+  if (!columns.some((column) => column.name === 'reason')) {
+    db.exec('ALTER TABLE stage_history ADD COLUMN reason TEXT');
+  }
+}

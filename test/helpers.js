@@ -1,8 +1,7 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import Database from 'better-sqlite3';
 import request from 'supertest';
-import { SCHEMA } from '../src/db/schema.js';
+import { openDb } from '../src/db/connection.js';
 import { createStatements } from '../src/db/queries.js';
 import { seed } from '../src/db/seed.js';
 import { createSessionStore } from '../src/services/auth-service.js';
@@ -21,9 +20,9 @@ const projectRoot = fileURLToPath(new URL('..', import.meta.url));
  * Every test gets its own, so nothing leaks between them.
  */
 export function createTestContext({ now = NOW } = {}) {
-  const db = new Database(':memory:');
-  db.pragma('foreign_keys = ON');
-  db.exec(SCHEMA);
+  // The same openDb the server uses, so the tests exercise the real schema
+  // and the real migration path rather than a hand-rolled copy of the DDL.
+  const db = openDb(':memory:');
 
   const statements = createStatements(db);
   seed(db, statements, now);

@@ -74,6 +74,18 @@ function stageClass(stage) {
   return `stage-badge stage-${index === -1 ? 0 : index}`;
 }
 
+/**
+ * Is this move a step back down the workflow?
+ *
+ * The ordered list of stages comes down with the vendors, so the browser can
+ * tell forward from backward without asking the server.
+ */
+function isBackwardMove(vendor, target) {
+  const from = state.stages.indexOf(vendor.stage);
+  const to = state.stages.indexOf(target);
+  return from !== -1 && to !== -1 && to < from;
+}
+
 // ------------------------------------------------------------------- views
 
 function showLogin() {
@@ -264,12 +276,36 @@ function renderAction(vendor) {
   }
   select.value = vendor.stage;
 
+  // Moving a vendor back is rework, so the coordinator has to say why. The
+  // server insists on it too; this is here so the reason is captured rather
+  // than rejected.
+  const reason = el('input', {
+    type: 'text',
+    placeholder: 'Why is the vendor moving back?',
+    'aria-label': `Reason for moving ${vendor.name} back`,
+  });
+  reason.hidden = true;
+
   const update = el('button', {
     type: 'button',
     class: 'btn',
     text: 'Update',
-    onclick: () => updateStage(vendor.id, select.value),
+    onclick: () => updateStage(vendor.id, select.value, reason.value),
   });
+
+  // The button is toggled through the DOM property, not through el()'s
+  // attribute map: el() turns `false` into disabled="false", and a present
+  // boolean attribute disables the button whatever its value says.
+  const sync = () => {
+    const backward = isBackwardMove(vendor, select.value);
+    reason.hidden = !backward;
+    if (!backward) reason.value = '';
+    update.disabled = backward && reason.value.trim() === '';
+  };
+
+  select.addEventListener('change', sync);
+  reason.addEventListener('input', sync);
+  sync();
 
   const toggle = el('button', {
     type: 'button',
@@ -282,7 +318,7 @@ function renderAction(vendor) {
   });
 
   return el('div', {}, [
-    el('div', { class: 'action' }, [select, update]),
+    el('div', { class: 'action' }, [select, update, reason]),
     toggle,
   ]);
 }
@@ -310,6 +346,9 @@ function renderHistoryRow(vendor) {
           class: 'meta',
           text: `${entry.changedBy.name} · ${formatTimestamp(entry.changedAt)}`,
         }),
+        entry.reason
+          ? el('div', { class: 'reason', text: `Reason: ${entry.reason}` })
+          : null,
       ]),
     );
     content = el('ul', { class: 'timeline' }, items);
@@ -327,15 +366,19 @@ function renderHistoryRow(vendor) {
 
 // --------------------------------------------------------------- actions
 
-async function updateStage(vendorId, stage) {
+async function updateStage(vendorId, stage, reason) {
   const vendor = state.vendors.find((v) => v.id === vendorId);
   if (!vendor) return;
 
   delete state.messages[vendorId];
 
+  const body = { stage, expectedVersion: vendor.version };
+  const trimmedReason = typeof reason === 'string' ? reason.trim() : '';
+  if (trimmedReason !== '') body.reason = trimmedReason;
+
   const { status, payload } = await api(`/api/vendors/${vendorId}/stage`, {
     method: 'PATCH',
-    body: { stage, expectedVersion: vendor.version },
+    body,
   });
 
   if (status === 200) {

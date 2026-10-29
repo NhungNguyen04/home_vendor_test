@@ -62,12 +62,23 @@ export const SEED_VENDORS = [
     history: [{ from: 'Contract Sent', to: 'Contract Signed', offsetMs: days(3) }],
   },
   {
+    // A rework loop: the licence was rejected, so the vendor was sent back to
+    // re-sign. The backward hop carries the reason it was sent back.
     id: 4,
     name: 'Company D',
     region: 'HCMC',
     ownerId: 3,
     notes: null,
-    history: [{ from: 'KYC Docs Received', to: 'KYC Verified', offsetMs: days(6) }],
+    history: [
+      {
+        from: 'KYC Docs Received',
+        to: 'Contract Signed',
+        offsetMs: days(9),
+        reason: 'Business licence rejected - sent back to re-sign',
+      },
+      { from: 'Contract Signed', to: 'KYC Docs Received', offsetMs: days(7) },
+      { from: 'KYC Docs Received', to: 'KYC Verified', offsetMs: days(6) },
+    ],
   },
   {
     // Exactly at the threshold - not stuck.
@@ -193,12 +204,13 @@ export function seed(db, statements, now) {
       });
 
       for (const entry of vendor.history) {
-        statements.insertSeededHistory.run({
+        statements.insertHistory.run({
           vendorId: vendor.id,
           changedBy: vendor.ownerId,
           previousStage: entry.from,
           newStage: entry.to,
           changedAt: now - entry.offsetMs,
+          reason: entry.reason ?? null,
         });
       }
     }

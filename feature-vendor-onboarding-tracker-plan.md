@@ -33,8 +33,8 @@ that falling behind is a decision rather than a panic.
    is still met by an expandable row. Never cut tests to buy UI time.
 
 **Never cut:** the domain layer and its tests, the single write transaction, the version
-check, the no-op behaviour, the unknown-duration handling, `PRAGMA foreign_keys = ON`,
-or the strict `>` boundary.
+check, the no-op behaviour, the backward-move reason rule, the unknown-duration
+handling, `PRAGMA foreign_keys = ON`, or the strict `>` boundary.
 
 # Plan & Steps (authoritative checklist)
 
@@ -73,6 +73,7 @@ given an exact instant.
 **Deliverables:**
 
 - [Not Started] The five stages defined in workflow order, with validation and a terminal-stage predicate
+- [Not Started] Each stage defined as a **state object** that owns its position, its terminal flag, its allowed targets, and `judgeMove()` — the classifier the write path asks
 - [Not Started] Duration computed from an exact millisecond difference, with a null stage-entry time represented as unknown rather than as zero
 - [Not Started] The stuck rule implemented as an exact integer comparison against the threshold, with floored days kept for display only
 - [Not Started] Duration formatting for the known, unknown, and invalid-future cases
@@ -96,6 +97,7 @@ so that the dataset is identical on every machine, in every timezone, and at any
 **Deliverables:**
 
 - [Not Started] Schema defined with the stage and no-op constraints and the indexes
+- [Not Started] A nullable `reason` column on `stage_history`, plus a one-shot guarded `ALTER` so a database written by an earlier version keeps working
 - [Not Started] Connection helper that enables foreign-key enforcement and applies the schema idempotently
 - [Not Started] Prepared statements created once per connection
 - [Not Started] Seed covering all five stages, three coordinators, and every named edge case — including a vendor at exactly the threshold, one a millisecond over it, one that floors to the threshold but exceeds it, one below it, and one with no stage-entry time
@@ -118,7 +120,8 @@ place.
 
 **Deliverables:**
 
-- [Not Started] Stage change evaluated in order — not found, invalid stage, version conflict, no-op, then write
+- [Not Started] Stage change evaluated in order — not found, invalid stage, version conflict, no-op, invalid transition, reason required, then write
+- [Not Started] The move judged by the current stage's state object rather than by comparing stage names, so a backward move is refused without a reason
 - [Not Started] The vendor update and the history insert committed in one transaction, with the version-guarded update as the authoritative check
 - [Not Started] A no-op submission returning "unchanged" without writing history, without bumping the version, and without touching the stage-entry timestamp
 - [Not Started] A version conflict returning the current stage and version without writing anything
@@ -142,6 +145,7 @@ so that it cannot swallow an unknown API route.
 - [Not Started] Login, logout, and current-user endpoints
 - [Not Started] The vendor list, single vendor, and vendor history endpoints
 - [Not Started] The stage update endpoint returning the vendor, the changed flag, and the new history entry
+- [Not Started] An optional `reason` on the request, validated as text, and a `400` with `details.field: "reason"` when a backward move arrives without one
 - [Not Started] Authentication middleware applied once to the API surface, with the session cookie attached as `HttpOnly` and `SameSite=Lax`
 - [Not Started] A single error envelope with distinct codes for invalid requests, invalid credentials, unauthenticated access, not found, and version conflicts
 - [Not Started] Malformed request bodies rejected as a client error rather than a server error
@@ -166,6 +170,8 @@ row.
 - [Not Started] Duration and threshold tests covering the boundary from below, at, and above, plus the floored-days trap
 - [Not Started] Tests for the unknown-duration and invalid-future-timestamp cases
 - [Not Started] Stage validation tests across all five stages and a rejected value
+- [Not Started] Stage-state tests: each stage's position and terminal flag, and how it judges a forward, backward and same-stage move
+- [Not Started] Schema tests for the `reason` column and the guarded migration
 - [Not Started] Schema tests proving the stage constraint, the no-op constraint, and foreign-key enforcement are live
 - [Not Started] Invariant tests over the whole dataset: the stage-entry timestamp matches the newest matching history entry, the newest history entry matches the current stage, the version matches the history count, every stage is valid, and no history row is a no-op
 - [Not Started] Seed tests proving the dataset's shape, its idempotence, and its boundary coverage
@@ -190,6 +196,7 @@ produce, because the actor always comes from a valid session.
 - [Not Started] Read-path tests covering the response shape, the tri-state stuckness at the wire level, empty history, and unknown and malformed vendor identifiers
 - [Not Started] Stage-change tests covering the happy path, the recorded actor and both stages, the reset stage-entry timestamp, the version increment, the no-op, an invalid stage, a missing or malformed expected version, an unknown vendor, and an unauthenticated attempt
 - [Not Started] A two-coordinator test in which the second write is rejected, exactly one history row is added, and the final stage and the history agree
+- [Not Started] Backward-move tests: refused without a reason and nothing written, accepted with one and the reason recorded, a forward move still needing none, and a stale version reported before a missing reason
 - [Not Started] A service-level rollback test proving that a failed transaction leaves both the vendor and the history table untouched
 - [Not Started] A test proving the read path never mutates a vendor — the structural expression of the failed-KYC rule
 
@@ -232,6 +239,7 @@ vendor's full change log, and the failed-KYC hint appears where it is relevant.
 - [Not Started] A readable conflict banner naming the current stage and the coordinator who made the change, with the affected row refreshed
 - [Not Started] An expanded history panel per vendor showing previous stage, new stage, the coordinator, and the timestamp, newest first
 - [Not Started] A visible "already in this stage, nothing recorded" outcome for a no-op submission
+- [Not Started] A reason field that appears when the selected stage is earlier than the vendor's current one, keeping the update button disabled until it is filled in, and the reason shown on the history entry
 - [Not Started] The failed-KYC hint shown on rows awaiting document re-upload
 - [Not Started] The board refreshed from the server after a change, with time in stage reset to zero
 

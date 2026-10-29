@@ -102,7 +102,7 @@ export function createRouter({ db, statements, sessions, clock, config }) {
 
   router.patch('/vendors/:id/stage', requireAuth(sessions, clock), (req, res) => {
     const vendorId = parseVendorId(req.params.id);
-    const { stage, expectedVersion } = req.body ?? {};
+    const { stage, expectedVersion, reason } = req.body ?? {};
 
     if (typeof stage !== 'string' || !stage) {
       throw new AppError('invalid_request', 'A stage is required.', {
@@ -116,11 +116,18 @@ export function createRouter({ db, statements, sessions, clock, config }) {
       });
     }
 
+    if (reason !== undefined && typeof reason !== 'string') {
+      throw new AppError('invalid_request', 'The reason must be text.', {
+        details: { field: 'reason' },
+      });
+    }
+
     const result = changeStage(db, statements, {
       vendorId,
       newStage: stage,
       actorId: req.coordinatorId,
       expectedVersion,
+      reason,
       now: clock.now(),
     });
 
@@ -132,6 +139,31 @@ export function createRouter({ db, statements, sessions, clock, config }) {
       throw new AppError('invalid_request', `"${stage}" is not one of the onboarding stages.`, {
         details: { field: 'stage', allowed: STAGES },
       });
+    }
+
+    if (result.kind === 'invalid_transition') {
+      throw new AppError(
+        'invalid_request',
+        `A vendor cannot move from ${result.from} to ${result.to}.`,
+        {
+          details: {
+            field: 'stage',
+            from: result.from,
+            to: result.to,
+            allowed: result.allowed,
+          },
+        },
+      );
+    }
+
+    if (result.kind === 'reason_required') {
+      throw new AppError(
+        'invalid_request',
+        `Moving ${result.vendor.name} back from ${result.from} to ${result.to} needs a reason.`,
+        {
+          details: { field: 'reason', from: result.from, to: result.to },
+        },
+      );
     }
 
     if (result.kind === 'stale') {

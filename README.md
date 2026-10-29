@@ -70,7 +70,7 @@ VENDOR_TRACKER_NOW=2026-08-10T00:00:00Z npm start
 | --- | --- |
 | **Coordinator login** | `POST /api/login` checks an scrypt hash and issues an HttpOnly session cookie. Every API route except login sits behind one authentication middleware, so the acting coordinator is taken from the session and never from the request body. |
 | **View vendors** | `GET /api/vendors` returns the list with stage, owner, time in stage, stuck flag and last change. The dashboard adds search, stage filter and a "only stuck" toggle. |
-| **Update stage, recorded automatically** | `PATCH /api/vendors/:id/stage` writes the new stage, the coordinator and the timestamp to `stage_history` in the same transaction that updates the vendor, and keeps the previous stage. The history is visible per vendor from the dashboard. |
+| **Update stage, recorded automatically** | `PATCH /api/vendors/:id/stage` writes the new stage, the coordinator and the timestamp to `stage_history` in the same transaction that updates the vendor, and keeps the previous stage. Moving a vendor *back* also records why. The history is visible per vendor from the dashboard. |
 | **Highlight stuck vendors** | Time in stage is computed from `stage_entered_at`, which the system writes on every stage change. Nothing is typed into a "last updated" field by a person. |
 
 ---
@@ -93,6 +93,19 @@ Dependencies point one way: `http → services → db`, with the pure `domain`
 layer imported by both `services` and `http` and depending on nothing. The
 duration and stuckness rules therefore have no database in their unit tests, and
 can be read on their own.
+
+The stages themselves are **state objects** (`src/domain/stages.js`). Each of
+the five knows its place in the workflow, whether it is the terminal stage, which
+stages it may move to, and — through `judgeMove()` — how to classify a proposed
+move. The write path asks the vendor's current stage to judge the move instead
+of comparing stage names against a list of conditionals, so a rule that differs
+between stages lives on the stage it belongs to:
+
+```js
+const move = from.judgeMove(to);          // { allowed, direction, requiresReason }
+if (!move.allowed) return { kind: 'invalid_transition' };
+if (move.requiresReason && !reason) return { kind: 'reason_required' };
+```
 
 The whole app has two runtime dependencies (`express`, `better-sqlite3`) and one
 dev dependency (`supertest`). Fewer moving parts is worth more than a framework
@@ -146,10 +159,15 @@ vendor — which is what makes "a failed verification does not advance the
 vendor" true structurally rather than by convention. It is also what keeps the
 app from quietly inventing progress the Ops team never made.
 
-**Arbitrary transitions are allowed.** The brief requires coordinators to move
-vendors and does not require enforcing order, so a coordinator may move a
-vendor between any two stages. The one judgement this does not make for them
-is the failed-KYC case above, which is expressed by not moving the vendor.
+**Arbitrary transitions are allowed — but a backward one has to be explained.**
+The brief requires coordinators to move vendors and does not require enforcing
+order, so a coordinator may move a vendor between any two stages. The one
+judgement this does make is about *backward* moves: sending a vendor back to an
+earlier stage is rework, so the coordinator has to say why, and the reason is
+recorded with the change. That rule is a property of the stage states, not a
+fourth `if` in the write path — `judgeMove()` is the only thing that knows what
+"backward" means. The one judgement the app does *not* make for them is the
+failed-KYC case above, which is expressed by not moving the vendor.
 
 ---
 
@@ -163,7 +181,7 @@ behaviour is visible without touching the database:
 | A | Active | 90d | finished; long past the threshold but not stalled |
 | B | KYC Docs Received | 24d | **stuck** — and the KYC re-upload note |
 | C | Contract Signed | 3d | healthy |
-| D | KYC Verified | 6d | healthy, close to the threshold |
+| D | KYC Verified | 6d | healthy, close to the threshold — and a **rework loop**: sent back to re-sign, with the reason recorded |
 | E | KYC Docs Received | exactly 7d | **on the boundary** — not stuck |
 | F | Contract Sent | 12d | **stuck**; imported with no prior stage |
 | G | Active | 45d | finished |
@@ -187,7 +205,12 @@ All responses use one error shape: `{ "error": { "code", "message", "details?" }
 | `GET /api/vendors` | yes | — | `200 { vendors, stages, stuckThresholdDays, asOf, clockFrozen }` | `401` |
 | `GET /api/vendors/:id` | yes | — | `200 { vendor }` | `401`, `404` |
 | `GET /api/vendors/:id/history` | yes | — | `200 { vendorId, history }` | `401`, `404` |
-| `PATCH /api/vendors/:id/stage` | yes | `{ stage, expectedVersion }` | `200 { changed, vendor, historyEntry? }` | `401`, `400`, `404`, `409` |
+| `PATCH /api/vendors/:id/stage` | yes | `{ stage, expectedVersion, reason? }` | `200 { changed, vendor, historyEntry? }` | `401`, `400`, `404`, `409` |
+
+`reason` is optional in general and **required for a backward move** — a move to an
+earlier stage. Without one, the request is refused with
+`400 invalid_request` and `error.details.field === "reason"`, and nothing is written.
+A forward move may still carry a note, and that note is recorded the same way.
 
 A vendor looks like this:
 
@@ -211,7 +234,8 @@ A vendor looks like this:
     "previousStage": "Contract Signed",
     "newStage": "KYC Docs Received",
     "changedBy": { "id": 2, "name": "Huy" },
-    "changedAt": "2026-07-17T00:00:00.000Z"
+    "changedAt": "2026-07-17T00:00:00.000Z",
+    "reason": null
   }
 }
 ```
@@ -228,18 +252,18 @@ null field.
 npm test
 ```
 
-Eighty-eight tests across seven files, each one tied to a rule rather than to
-an implementation detail:
+One hundred and eight tests across seven files, each one tied to a rule rather
+than to an implementation detail:
 
 | File | What it covers |
 | --- | --- |
 | `test/duration.test.js` | the threshold from both sides, the floored-days trap, unknown and future timestamps, the terminal-stage exemption |
-| `test/stages.test.js` | the five stages and their validation |
-| `test/schema.test.js` | the database constraints — invalid stage, dangling foreign key, a history entry that claims nothing changed — plus five invariants over the whole seeded dataset |
+| `test/stages.test.js` | the five stages, their validation, and the state objects — their positions, the terminal flag, and how each judges a proposed move |
+| `test/schema.test.js` | the database constraints — invalid stage, dangling foreign key, a history entry that claims nothing changed — the `reason` column and its migration, plus five invariants over the whole seeded dataset |
 | `test/seed.test.js` | the demo dataset's coverage of the interesting cases, and that a reseed is identical to the first one |
 | `test/auth.test.js` | the authentication gate, the cookie's flags, no password in any response, an unknown account being indistinguishable from a wrong password, session expiry |
 | `test/vendors.test.js` | the list and history shapes, the tri-state stuck flag on the wire, 404s |
-| `test/stage-change.test.js` | the write path: who changed it and when, the clock restarting, the no-op, the stale version, the two-coordinator race, and a failed write leaving the vendor untouched |
+| `test/stage-change.test.js` | the write path: who changed it and when, the clock restarting, the no-op, the stale version, the two-coordinator race, the backward-move reason rule, and a failed write leaving the vendor untouched |
 
 The two-coordinator race is modelled the way it actually happens: both
 coordinators are looking at the same version, the first one succeeds, and the

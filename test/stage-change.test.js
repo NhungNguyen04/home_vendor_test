@@ -263,6 +263,139 @@ test('the change is attributed to the coordinator who is signed in', async () =>
   assert.deepEqual(response.body.historyEntry.changedBy, { id: 2, name: 'Huy' });
 });
 
+// ------------------------------------------------------------ moving back
+
+test('a backward move without a reason is rejected, and nothing is written', async () => {
+  // Company C sits in "Contract Signed"; "Contract Sent" is a step back.
+  const { app } = createTestContext();
+  const agent = await signIn(app);
+  const vendor = await loadVendor(agent, 3);
+
+  const response = await agent
+    .patch('/api/vendors/3/stage')
+    .send({ stage: 'Contract Sent', expectedVersion: vendor.version });
+
+  assert.equal(response.status, 400);
+  assert.equal(response.body.error.code, 'invalid_request');
+  assert.equal(response.body.error.details.field, 'reason');
+  assert.equal(response.body.error.details.from, 'Contract Signed');
+  assert.equal(response.body.error.details.to, 'Contract Sent');
+
+  const after = await loadVendor(agent, 3);
+  assert.equal(after.stage, 'Contract Signed');
+  assert.equal(after.version, vendor.version);
+
+  const history = await agent.get('/api/vendors/3/history');
+  assert.equal(history.body.history.length, 1);
+});
+
+test('a backward move with a reason is accepted, and the reason is recorded', async () => {
+  const { app } = createTestContext();
+  const agent = await signIn(app);
+  const vendor = await loadVendor(agent, 3);
+
+  const response = await agent
+    .patch('/api/vendors/3/stage')
+    .send({
+      stage: 'Contract Sent',
+      expectedVersion: vendor.version,
+      reason: 'Wrongly entered - the contract was never sent',
+    });
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.changed, true);
+  assert.equal(response.body.vendor.stage, 'Contract Sent');
+  assert.equal(
+    response.body.historyEntry.reason,
+    'Wrongly entered - the contract was never sent',
+  );
+
+  const history = await agent.get('/api/vendors/3/history');
+  assert.equal(history.body.history[0].reason, 'Wrongly entered - the contract was never sent');
+});
+
+test('a reason made of nothing but spaces is not a reason', async () => {
+  const { app } = createTestContext();
+  const agent = await signIn(app);
+  const vendor = await loadVendor(agent, 3);
+
+  const response = await agent
+    .patch('/api/vendors/3/stage')
+    .send({ stage: 'Contract Sent', expectedVersion: vendor.version, reason: '   ' });
+
+  assert.equal(response.status, 400);
+  assert.equal(response.body.error.details.field, 'reason');
+});
+
+test('a reason that is not text is rejected', async () => {
+  const { app } = createTestContext();
+  const agent = await signIn(app);
+  const vendor = await loadVendor(agent, 3);
+
+  const response = await agent
+    .patch('/api/vendors/3/stage')
+    .send({ stage: 'Contract Sent', expectedVersion: vendor.version, reason: 42 });
+
+  assert.equal(response.status, 400);
+  assert.equal(response.body.error.details.field, 'reason');
+});
+
+test('a forward move needs no reason', async () => {
+  const { app } = createTestContext();
+  const agent = await signIn(app);
+  const vendor = await loadVendor(agent, 3);
+
+  const response = await agent
+    .patch('/api/vendors/3/stage')
+    .send({ stage: 'KYC Docs Received', expectedVersion: vendor.version });
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.changed, true);
+  assert.equal(response.body.historyEntry.reason, null);
+});
+
+test('a forward move may still carry a note', async () => {
+  const { app } = createTestContext();
+  const agent = await signIn(app);
+  const vendor = await loadVendor(agent, 3);
+
+  const response = await agent
+    .patch('/api/vendors/3/stage')
+    .send({ stage: 'KYC Docs Received', expectedVersion: vendor.version, reason: 'Docs in' });
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.historyEntry.reason, 'Docs in');
+});
+
+test('a no-op needs no reason', async () => {
+  const { app } = createTestContext();
+  const agent = await signIn(app);
+  const vendor = await loadVendor(agent, 3);
+
+  const response = await agent
+    .patch('/api/vendors/3/stage')
+    .send({ stage: 'Contract Signed', expectedVersion: vendor.version });
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.changed, false);
+});
+
+test('a stale version is reported before a missing reason', async () => {
+  // The order matters. The caller's view is out of date, so the answer is
+  // "your change was not applied" - not "you need a reason". Telling them
+  // about the reason first would be advice about a change that cannot happen.
+  const { app } = createTestContext();
+  const agent = await signIn(app);
+  const vendor = await loadVendor(agent, 3);
+
+  const response = await agent
+    .patch('/api/vendors/3/stage')
+    .send({ stage: 'Contract Sent', expectedVersion: vendor.version + 5 });
+
+  assert.equal(response.status, 409);
+  assert.equal(response.body.error.code, 'version_conflict');
+});
+
 test('reading the tracker never moves a vendor on by itself', async () => {
   // BR-07: a vendor whose KYC verification failed stays where it is. Nothing
   // in the read path may advance a stage.
@@ -328,5 +461,5 @@ test('the version in the WHERE clause is the real guard', () => {
 
   assert.equal(result.kind, 'stale');
   assert.equal(statements.getVendor.get(3).stage, 'KYC Docs Received');
-  assert.equal(statements.countHistory.get().count, 12); // only the seeded rows
+  assert.equal(statements.countHistory.get().count, 14); // only the seeded rows
 });

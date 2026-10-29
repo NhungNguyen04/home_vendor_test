@@ -77,6 +77,7 @@ label {
 input[type="email"],
 input[type="password"],
 input[type="search"],
+input[type="text"],
 select {
   width: 100%;
   padding: 9px 10px;
@@ -108,6 +109,15 @@ button:focus-visible {
 
 .btn:hover {
   background: #f0f3f6;
+}
+
+.btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.btn:disabled:hover {
+  background: var(--surface);
 }
 
 .btn-primary {
@@ -451,12 +461,22 @@ table.vendors {
 
 .action {
   display: flex;
+  flex-wrap: wrap;
   gap: 6px;
   align-items: center;
 }
 
 .action select {
   width: auto;
+  margin-bottom: 0;
+  padding: 6px 8px;
+  font-size: 13px;
+}
+
+.action input[type="text"] {
+  width: auto;
+  flex: 1 1 150px;
+  min-width: 150px;
   margin-bottom: 0;
   padding: 6px 8px;
   font-size: 13px;
@@ -561,6 +581,13 @@ table.vendors {
 .timeline .meta {
   color: var(--muted);
   font-size: 12.5px;
+}
+
+.timeline .reason {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 12.5px;
+  font-style: italic;
 }
 
 .empty {

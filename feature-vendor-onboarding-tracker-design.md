@@ -121,6 +121,9 @@ Explicitly out of scope, per the assignment:
    coordinators to move vendors and does not require enforcing order, so any stage may
    move to any other. This is documented as an assumption, and the constraint is enforced
    only where it matters: there is no automatic transition, so BR-07 holds structurally.
+   The one judgement the application does make is about *backward* moves: a coordinator
+   who sends a vendor back to an earlier stage is doing rework, and must say why. The
+   reason is recorded with the change (`stage_history.reason`).
 6. **`stage_entered_at` may be null.** The brief asks for the missing-timestamp case to
    be handled explicitly. A null means *unknown*, and is represented and displayed as
    unknown — never as zero, never as today.
@@ -184,9 +187,9 @@ database and are obvious on review. The service layer owns the only write path, 
 | --- | --- | --- |
 | `src/config.js` | Reads env vars once at startup | `config` |
 | `src/clock.js` | The **only** place that reads the wall clock; ISO ⇄ epoch conversion | `now()`, `toIso()`, `fromIso()` |
-| `src/domain/stages.js` | The five stages as an ordered list; validation | `STAGES`, `isValidStage()`, `isTerminal()` |
+| `src/domain/stages.js` | The five stages as **state objects** — each owns its position, its terminal flag, its allowed targets, and how it judges a proposed move | `STAGE_STATES`, `STAGES`, `stageStateFor()`, `isValidStage()`, `isTerminal()` |
 | `src/domain/duration.js` | Pure duration + stuck computation | `computeDuration()`, `isStuck()`, `formatDuration()` |
-| `src/db/schema.js` | DDL as an exported string | `SCHEMA` |
+| `src/db/schema.js` | DDL as an exported string, plus the one-shot column migration | `SCHEMA`, `migrate()` |
 | `src/db/connection.js` | Opens the database, applies pragmas and schema | `openDb()` |
 | `src/db/queries.js` | Prepares every statement once | `createStatements()` |
 | `src/db/seed.js` | Deterministic demo dataset | `seed()`, `SEED_VENDORS` |
@@ -197,6 +200,45 @@ database and are obvious on review. The service layer owns the only write path, 
 | `src/http/routes.js` | The REST surface | `router` |
 | `src/server.js` | Composition root and listener | — |
 | `public/` | The single-page UI | `index.html`, `app.js`, `styles.css` |
+
+### The stage lifecycle: the State pattern
+
+`src/domain/stages.js` is not a list of names. Each stage is a **state object** that
+owns the rules that differ between stages:
+
+```js
+{ name, index, isTerminal, allowedTargets, judgeMove(target) }
+```
+
+`judgeMove()` classifies a proposed move as `forward`, `backward` or `same`, and answers
+three questions about it: is it allowed, which direction is it, and does it need a
+reason. The write path asks the vendor's *current* stage to judge the move:
+
+```js
+const move = from.judgeMove(to);
+if (!move.allowed) return { kind: 'invalid_transition', … };
+if (move.requiresReason && trimmedReason === '') return { kind: 'reason_required', … };
+```
+
+Why a pattern rather than a flat list of names plus conditionals:
+
+- **The rules live next to the thing they are about.** "Backward moves need a reason"
+  is a property of moving backward, so it sits in the one function that knows what
+  backward means. It is not a fourth `if` in the service, next to three unrelated ones.
+- **The extension point is explicit.** `allowedTargets` is where a per-stage rule goes.
+  Today every stage allows every other stage, so the set is derived rather than written
+  out; the day a stage gains a rule of its own ("you may not leave this stage until the
+  licence is approved"), it is added there — on that stage — and nowhere else.
+- **The write path stops testing names.** `changeStage()` no longer compares stage
+  strings against lists of stage strings. It asks, and gets an answer.
+
+`STAGES`, `TERMINAL_STAGE`, `isValidStage()`, `isTerminal()` and `stageIndex()` keep
+their existing exports and behaviour — they are now *derived* from the state objects,
+so there is one source of truth rather than two that have to agree.
+
+The pattern changes no behaviour today: transitions remain any-to-any. It gives the
+rules a home, which is what the brief's *"how would you extend this if requirements
+change"* question is really asking for.
 
 ### How BR-07 (failed KYC verification) is structurally enforced
 
@@ -246,6 +288,16 @@ same-stage check, following `If-Match` semantics (RFC 9110 §13.1.1): the client
 any answer derived from it may mislead — including "you were already at this stage",
 which would be a lie if another coordinator had just moved the vendor.
 
+The same reasoning places the two stage-derived checks — *invalid transition* and
+*reason required* — behind the version check: both are answers about the vendor's
+current stage, so a stale view must not produce them. And *reason required* sits behind
+the no-op check, so a submission that changes nothing never demands a reason it has no
+use for. The full order is:
+
+```
+not_found → invalid_stage → stale → unchanged → invalid_transition → reason_required → write
+```
+
 ---
 
 ## 4) Data Model Changes
@@ -285,6 +337,7 @@ CREATE TABLE stage_history (
                  CHECK (new_stage IN ('Contract Sent','Contract Signed',
                                       'KYC Docs Received','KYC Verified','Active')),
   changed_at     INTEGER NOT NULL,
+  reason         TEXT,                 -- required for a backward move; NULL otherwise
   CHECK (previous_stage IS NULL OR previous_stage <> new_stage)  -- no-op guard
 );
 
@@ -309,8 +362,18 @@ CREATE INDEX idx_history_changed_by ON stage_history(changed_by);
   conflate responsibility with activity and destroy the audit trail.
 - **`version`** starts at 1 and increments by 1 per accepted change. It is a token, not a
   counter of anything meaningful.
+- **`reason` records why a vendor was sent back.** It is nullable, because a forward
+  move has nothing to explain — although a forward move may still carry a note. A
+  backward move without one is refused before anything is written, so the column never
+  holds a row that says a vendor was reworked without saying why.
 - **No migration framework.** One `CREATE TABLE IF NOT EXISTS` schema applied at boot.
   The database is disposable; "migration" is deleting the file and re-seeding.
+  The one exception is `migrate()` in `src/db/schema.js`: a single guarded
+  `ALTER TABLE … ADD COLUMN` for the `reason` column, run at boot. `CREATE TABLE IF
+  NOT EXISTS` creates a missing table but cannot add a column to one that already
+  exists, so without it a database written by the previous version would fail on the
+  first stage change. It is one guarded statement, not a framework — the database is
+  still disposable, but a stale one keeps working instead of breaking.
 
 ### Seed data
 
@@ -324,7 +387,7 @@ the dataset is identical on every machine and in every timezone.
 | Company A | HCMC | Active | 90 days | healthy, terminal stage |
 | Company B | Can Tho | KYC Docs Received | 24 days | **failed KYC** — stuck, with the re-upload note |
 | Company C | Hanoi | Contract Signed | 3 days | healthy |
-| Company D | HCMC | KYC Verified | 6 days | healthy, approaching the threshold |
+| Company D | HCMC | KYC Verified | 6 days | healthy, approaching the threshold — and a **rework loop**: it was sent back to re-sign, and that backward hop carries its reason |
 | Company E | Da Nang | KYC Docs Received | 7 days **exactly** | the boundary — **not** stuck |
 | Company F | HCMC | Contract Sent | 12 days | stuck |
 | Company G | Hanoi | Active | 45 days | healthy |
@@ -338,11 +401,13 @@ Company E, J, K and L exist together on purpose: they pin the boundary from both
 and prove that the rule is applied to the exact elapsed milliseconds rather than to a
 floored day count.
 
-Each seeded vendor except Company H gets one or two `stage_history` rows, so the history
+Each seeded vendor except Company H gets one or more `stage_history` rows, so the history
 panel is never empty for a vendor that has actually moved. Company F's single entry has a
 null `previous_stage`, because it was imported straight into "Contract Sent" with no prior
 stage. Company H has no history at all: it was imported with a blank date and no
-transitions, which is exactly the case the unknown-duration badge exists for.
+transitions, which is exactly the case the unknown-duration badge exists for. Company D's
+three rows include one **backward** hop with a reason, so the rework case is visible in
+the demo dataset without anyone having to trigger it.
 
 ### Invariants the data must satisfy
 
@@ -375,7 +440,7 @@ All endpoints are JSON. Errors use one envelope everywhere:
 | `GET /api/vendors` | yes | — | `200 { vendors[], stages[], stuckThresholdDays, asOf }` | `401` |
 | `GET /api/vendors/:id` | yes | — | `200 { vendor }` | `401`, `404 not_found` |
 | `GET /api/vendors/:id/history` | yes | — | `200 { vendorId, history[] }` | `401`, `404 not_found` |
-| `PATCH /api/vendors/:id/stage` | yes | `{ "stage", "expectedVersion" }` | `200 { vendor, changed, historyEntry }` | `401`, `400 invalid_request`, `404 not_found`, `409 version_conflict` |
+| `PATCH /api/vendors/:id/stage` | yes | `{ "stage", "expectedVersion", "reason"? }` | `200 { vendor, changed, historyEntry }` | `401`, `400 invalid_request`, `404 not_found`, `409 version_conflict` |
 
 ### Vendor resource
 
@@ -399,7 +464,8 @@ All endpoints are JSON. Errors use one envelope everywhere:
     "previousStage": "Contract Signed",
     "newStage": "KYC Docs Received",
     "changedBy": { "id": 2, "name": "Huy" },
-    "changedAt": "2026-07-17T00:00:00.000Z"
+    "changedAt": "2026-07-17T00:00:00.000Z",
+    "reason": null
   }
 }
 ```
@@ -436,8 +502,16 @@ that case.
 | `expectedVersion` stale | `409 version_conflict`; nothing is written; the body names the current stage and version |
 | `expectedVersion` missing or non-integer | `400 invalid_request` with `details.field`; nothing is written |
 | `stage` not one of the five | `400 invalid_request` with `details.field`; nothing is written |
+| **Backward move** (to an earlier stage) with no reason | `400 invalid_request` with `details.field: "reason"`; nothing is written. Rework has to be explained |
+| **Backward move** with a reason | `200 { changed: true }`; the reason is stored on the history row and returned on `historyEntry.reason` |
+| A transition the current stage does not allow | `400 invalid_request` with `details.field: "stage"` and the allowed targets. Unreachable today — every stage allows every other — but it is the State pattern's rule, so it is surfaced properly if it ever bites |
 | Vendor not found | `404 not_found` |
 | Not authenticated | `401 unauthenticated`; nothing is written |
+
+**The reason requirement is a rule of the stage, not of the endpoint.** The current
+stage's `judgeMove()` decides that a backward move needs a reason; the service asks it
+and refuses when the answer is "yes and there is none". A forward move may still carry
+a note, and that note is stored the same way.
 
 **On the no-op path, `version` is deliberately not incremented.** If it were, the client's
 next update would fail with a spurious `409` against a version it never saw. This is
@@ -520,10 +594,10 @@ All paths are relative to the repository root.
 | `README.md` | Add | Run instructions, demo credentials, and the write-up. |
 | `src/config.js` | Add | Env-var configuration read once: `PORT`, `DB_PATH`, `STUCK_THRESHOLD_DAYS`, `VENDOR_TRACKER_NOW`. |
 | `src/clock.js` | Add | The only reader of the wall clock. Provides `now()`, `toIso()`, `fromIso()`. Honours the frozen-clock override. |
-| `src/domain/stages.js` | Add | The five stages in order, `isValidStage()`, `isTerminal()`. |
+| `src/domain/stages.js` | Add | The five stages as state objects — `name`, `index`, `isTerminal`, `allowedTargets`, `judgeMove()` — plus `STAGES`, `stageStateFor()`, `isValidStage()`, `isTerminal()`. |
 | `src/domain/duration.js` | Add | Pure duration and threshold logic: `computeDuration()`, `isStuck()`, `formatDuration()`. No I/O. |
-| `src/db/schema.js` | Add | DDL as an exported string, including the `CHECK` constraints and indexes. A JS string rather than a `.sql` file — no path resolution to get wrong between the server and the tests. |
-| `src/db/connection.js` | Add | Opens the database, applies `PRAGMA foreign_keys = ON` and the schema. |
+| `src/db/schema.js` | Add | DDL as an exported string, including the `CHECK` constraints and indexes, plus `migrate()` — the one guarded `ALTER` that adds the `reason` column to a database created by an earlier version. A JS string rather than a `.sql` file — no path resolution to get wrong between the server and the tests. |
+| `src/db/connection.js` | Add | Opens the database, applies `PRAGMA foreign_keys = ON`, the schema, and the migration. |
 | `src/db/queries.js` | Add | Prepares every statement once against a connection. |
 | `src/db/seed.js` | Add | The deterministic twelve-vendor dataset and three coordinators, relative to the injected clock. |
 | `src/services/stage-service.js` | Add | `changeStage()` — the single write transaction — plus `toVendorDto()`. |
@@ -533,16 +607,16 @@ All paths are relative to the repository root.
 | `src/http/routes.js` | Add | The REST surface described in §5. |
 | `src/server.js` | Add | Composition root: builds the database, seeds if empty, mounts routes, serves `public/`, listens. |
 | `public/index.html` | Add | The single page: login view and board view. |
-| `public/app.js` | Add | The SPA: one `state` object, one `render()`, `fetch` calls, the conflict banner, the history panel. |
+| `public/app.js` | Add | The SPA: one `state` object, one `render()`, `fetch` calls, the conflict banner, the history panel, and the reason field that appears when the selected stage is earlier than the vendor's current one. |
 | `public/styles.css` | Add | ~40 lines of plain, legible styling. No framework, no build step. |
-| `test/helpers.js` | Add | Builds an in-memory database with the schema, the seed, and a logged-in request helper. |
+| `test/helpers.js` | Add | Builds an in-memory database with the schema, the seed, and a logged-in request helper. It opens the database through `openDb()`, so the tests exercise the same schema and migration path as the server. |
 | `test/duration.test.js` | Add | The pure duration and threshold rules, including the exact boundary. |
-| `test/stages.test.js` | Add | Stage validation and ordering. |
-| `test/schema.test.js` | Add | The database constraints and the five invariants I1–I5. |
+| `test/stages.test.js` | Add | Stage validation and ordering, plus the state objects: their positions, the terminal flag, and how each judges a move. |
+| `test/schema.test.js` | Add | The database constraints and the five invariants I1–I5, plus the `reason` column and the migration. |
 | `test/seed.test.js` | Add | Seed shape, idempotence, and the boundary cases in the seeded data. |
 | `test/auth.test.js` | Add | BR-01: authentication, session lifecycle, no user enumeration, independent sessions. |
 | `test/vendors.test.js` | Add | The read path, and the tri-state `isStuck` at the wire level. |
-| `test/stage-change.test.js` | Add | BR-02, BR-03, BR-06, the no-op rule, the two-coordinator conflict, and the transaction's rollback. |
+| `test/stage-change.test.js` | Add | BR-02, BR-03, BR-06, the no-op rule, the two-coordinator conflict, the transaction's rollback, and the backward-move reason rule. |
 | `feature-vendor-onboarding-tracker-design.md` | Add | This document. |
 | `feature-vendor-onboarding-tracker-plan.md` | Add | The implementation plan: steps, deliverables, and status. |
 
@@ -615,7 +689,7 @@ story changes with it; that constraint is recorded here rather than solved in ad
 | # | Question | Owner | Decision deadline | Current position |
 | --- | --- | --- | --- | --- |
 | Q1 | Should a vendor in the terminal `Active` stage be exempt from the stuck threshold? | Product | Before a future iteration | **Exempt.** A vendor that reached `Active` has finished onboarding, so waiting there is the intended outcome rather than a stall. The threshold rule itself stays pure and is applied to every stage; the exemption lives in one function (`isVendorStuck`), so reversing it is a one-line change. `isTerminal` is exposed on the payload either way. |
-| Q2 | Should sequential stage transitions be enforced? | Product | Before a future iteration | **No.** The brief requires coordinators to move vendors and does not require ordering. Documented as an assumption; enforcing it later would be additive. |
+| Q2 | Should sequential stage transitions be enforced? | Product | Before a future iteration | **No.** The brief requires coordinators to move vendors and does not require ordering. Documented as an assumption; enforcing it later would be additive. The backward-move reason rule is *not* sequencing enforcement — a backward move is still allowed, it just has to be explained. |
 | Q3 | Should the coordinator be able to edit the free-text note? | Product | Before a future iteration | **Out of scope.** Notes are seeded and read-only. The spec asks for stage tracking, not a notes editor. |
 | Q4 | Should sessions survive a server restart? | Engineering | Next iteration | **No.** In-memory for now; a session table or Redis is the first item on the "what next" list. |
 | Q5 | Should the "stuck" list be sorted to the top by default? | Product | Before the UI is built | **No.** The board keeps the spreadsheet's alphabetical order, so a coordinator is not looking at a list that reorders itself under them; stuck vendors are marked in place and an "only stuck" filter narrows the list to them. This is a presentation choice, not a rule. |

@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import Database from 'better-sqlite3';
-import { SCHEMA } from './schema.js';
+import { SCHEMA, migrate } from './schema.js';
 
 /**
  * Open the database and make sure the schema exists.
@@ -19,5 +19,6 @@ export function openDb(dbPath) {
   const db = new Database(dbPath);
   db.pragma('foreign_keys = ON');
   db.exec(SCHEMA);
+  migrate(db);
   return db;
 }
