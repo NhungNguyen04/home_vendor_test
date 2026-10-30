@@ -21,6 +21,16 @@
   box-sizing: border-box;
 }
 
+.login-success {
+  margin: 16px 0;
+  padding: 14px 18px;
+  border: 1px solid #86c99a;
+  border-radius: 8px;
+  background: #edf8f0;
+  color: #216e39;
+  font-weight: 500;
+}
+
 body {
   margin: 0;
   background: var(--bg);

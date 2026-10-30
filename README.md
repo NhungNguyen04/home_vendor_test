@@ -5,10 +5,7 @@ spreadsheet. A coordinator signs in, sees every vendor's current stage, moves a
 vendor to the next stage, and sees who changed what and when. Vendors that have
 been sitting in one stage for too long are flagged automatically.
 
-The full design and the build plan live alongside this file:
-
-- [`feature-vendor-onboarding-tracker-design.md`](./feature-vendor-onboarding-tracker-design.md)
-- [`feature-vendor-onboarding-tracker-plan.md`](./feature-vendor-onboarding-tracker-plan.md)
+![Vendor Onboarding Tracker dashboard](./image.png)
 
 ---
 

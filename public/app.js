@@ -16,6 +16,7 @@ const state = {
   expandedVendorId: null,
   historyByVendor: {},
   messages: {},
+  showLoginSuccess: false,
 };
 
 const $ = (id) => document.getElementById(id);
@@ -100,6 +101,10 @@ async function showDashboard() {
 
   $('who-name').textContent = state.coordinator?.name ?? '—';
   $('who-email').textContent = state.coordinator?.email ?? '';
+
+  
+  $('login-success').hidden = !state.showLoginSuccess;
+  state.showLoginSuccess = false;
 
   await loadVendors();
 }
@@ -463,6 +468,7 @@ async function handleLogin(event) {
   }
 
   state.coordinator = payload.coordinator;
+  state.showLoginSuccess = true;
   $('password').value = '';
   await showDashboard();
 }
